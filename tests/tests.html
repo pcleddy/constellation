@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Constellation Explorer — Unit Tests</title>
+<style>
+body { font-family: monospace; background: #111; color: #ccc; padding: 20px; }
+h1 { color: #6ab4ff; margin-bottom: 16px; }
+h3 { color: #8ab4ff; margin-top: 14px; }
+.pass { color: #6c6; }
+.fail { color: #f66; }
+.warn { color: #fc6; }
+.summary { margin-top: 20px; padding: 12px; border: 1px solid #444; border-radius: 6px; font-size: 16px; }
+</style>
+</head>
+<body>
+<h1>Constellation Explorer — Tests</h1>
+<div id="results"></div>
+<div id="summary" class="summary"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="../js/data.js"></script>
+<script src="../js/addendum.js"></script>
+<script src="../js/Star.js"></script>
+<script src="../js/Constellation.js"></script>
+<script src="../js/Sky.js"></script>
+<script src="../js/Earth.js"></script>
+<script src="../js/Navigator.js"></script>
+<script src="../js/App.js"></script>
+<script>
+(function() {
+  const results = document.getElementById('results');
+  let passed = 0, failed = 0, warnings = 0;
+
+  function log(status, msg) {
+    const div = document.createElement('div');
+    div.className = status;
+    div.textContent = `  ${status === 'pass' ? '✓' : status === 'fail' ? '✗' : '⚠'} ${msg}`;
+    results.appendChild(div);
+    if (status === 'pass') passed++;
+    else if (status === 'fail') failed++;
+    else warnings++;
+  }
+  function section(title) {
+    const h = document.createElement('h3');
+    h.textContent = `━━━ ${title} ━━━`;
+    results.appendChild(h);
+  }
+
+  const consts = CST.constellations;
+
+  // ===== DATA INTEGRITY =====
+  section('Star Data Integrity');
+  log(consts.length >= 25 ? 'pass' : 'fail', `Found ${consts.length} constellations (≥25)`);
+
+  let totalStars = 0, allValid = true;
+  for (const c of consts) {
+    for (const s of c.stars) {
+      totalStars++;
+      if (s.ra < 0 || s.ra > 24) { log('fail', `${c.name}/${s.name}: RA ${s.ra} out of [0,24]`); allValid = false; }
+      if (s.dec < -90 || s.dec > 90) { log('fail', `${c.name}/${s.name}: Dec ${s.dec} out of [-90,90]`); allValid = false; }
+      if (typeof s.mag !== 'number') { log('fail', `${c.name}/${s.name}: missing mag`); allValid = false; }
+      if (!CST.SPECTRAL_COLORS[s.spectral]) { log('fail', `${c.name}/${s.name}: bad spectral '${s.spectral}'`); allValid = false; }
+    }
+  }
+  if (allValid) log('pass', `All ${totalStars} stars: valid RA, Dec, magnitude, spectral type`);
+
+  // ===== DISTANCE DATA =====
+  section('Star Distance Data');
+  let distOk = true;
+  for (const c of consts) {
+    for (const s of c.stars) {
+      if (!s.dist_ly || s.dist_ly <= 0) {
+        log('fail', `${c.name}/${s.name}: missing or invalid dist_ly`);
+        distOk = false;
+      }
+      if (s.dist_ly > 5000) {
+        log('warn', `${c.name}/${s.name}: dist_ly = ${s.dist_ly} (very distant)`);
+      }
+    }
+  }
+  if (distOk) log('pass', `All ${totalStars} stars have positive dist_ly`);
+
+  // Known distances
+  const sirius = consts.find(c => c.id === 'canisMajor').stars[0];
+  log(Math.abs(sirius.dist_ly - 8.6) < 1 ? 'pass' : 'fail', `Sirius dist_ly = ${sirius.dist_ly} (expected ~8.6)`);
+  const alphaCen = consts.find(c => c.id === 'centaurus').stars[0];
+  log(Math.abs(alphaCen.dist_ly - 4.4) < 1 ? 'pass' : 'fail', `Alpha Cen dist_ly = ${alphaCen.dist_ly} (expected ~4.4)`);
+  const vega = consts.find(c => c.id === 'lyra').stars[0];
+  log(Math.abs(vega.dist_ly - 25) < 3 ? 'pass' : 'fail', `Vega dist_ly = ${vega.dist_ly} (expected ~25)`);
+
+  // ===== LINE INTEGRITY =====
+  section('Constellation Lines');
+  let linesOk = true;
+  for (const c of consts) {
+    for (const [a, b] of c.lines) {
+      if (a < 0 || a >= c.stars.length || b < 0 || b >= c.stars.length) {
+        log('fail', `${c.name}: line [${a},${b}] out of range (${c.stars.length} stars)`);
+        linesOk = false;
+      }
+    }
+  }
+  if (linesOk) log('pass', 'All line indices valid');
+
+  let dupsOk = true;
+  for (const c of consts) {
+    const names = c.stars.map(s => s.name);
+    if (new Set(names).size !== names.length) { log('fail', `${c.name}: duplicate names`); dupsOk = false; }
+  }
+  if (dupsOk) log('pass', 'No duplicate star names');
+
+  // ===== POSITION MATH =====
+  section('3D Position Math');
+
+  const polaris = new CST.Star(consts.find(c => c.id === 'ursaMinor').stars[0]);
+  const pDir = polaris.getDirection();
+  log(pDir.y > 0.99 ? 'pass' : 'fail', `Polaris direction.y = ${pDir.y.toFixed(4)} (expected >0.99)`);
+  log(Math.abs(polaris.position.length() - 433) < 5 ? 'pass' : 'fail',
+    `Polaris distance from origin = ${polaris.position.length().toFixed(1)} (expected ~433 = dist_ly)`);
+
+  const siriusStar = new CST.Star(sirius);
+  log(siriusStar.position.y < 0 ? 'pass' : 'fail', `Sirius y = ${siriusStar.position.y.toFixed(2)} (expected <0)`);
+  log(Math.abs(siriusStar.position.length() - 8.6) < 0.5 ? 'pass' : 'fail',
+    `Sirius 3D distance = ${siriusStar.position.length().toFixed(2)} (expected ~8.6)`);
+
+  // ===== DEPTH VARIATION =====
+  section('Constellation Depth (3D spread)');
+  for (const c of consts) {
+    const dists = c.stars.map(s => s.dist_ly);
+    const minD = Math.min(...dists), maxD = Math.max(...dists);
+    const ratio = maxD / minD;
+    const hasDepth = ratio > 1.5 || c.stars.length <= 2;
+    log(hasDepth ? 'pass' : 'warn',
+      `${c.name}: ${minD.toFixed(0)}–${maxD.toFixed(0)} ly (ratio ${ratio.toFixed(1)}×)`);
+  }
+
+  // ===== STAR CLASS =====
+  section('Star Class');
+  const ts = new CST.Star({ name: 'T', ra: 12, dec: 45, mag: 1.5, spectral: 'G', dist_ly: 100 });
+  log(ts.name === 'T' ? 'pass' : 'fail', 'Star stores name');
+  log(ts.dist_ly === 100 ? 'pass' : 'fail', 'Star stores dist_ly');
+  log(ts.position instanceof THREE.Vector3 ? 'pass' : 'fail', 'Star.position is Vector3');
+  log(Math.abs(ts.position.length() - 100) < 1 ? 'pass' : 'fail', 'Star positioned at correct distance');
+  log(ts.getColor() === '#fff4ea' ? 'pass' : 'fail', `G-type color = ${ts.getColor()}`);
+  log(ts.getSize() > 0 ? 'pass' : 'fail', `Star size = ${ts.getSize().toFixed(2)}`);
+  log(typeof ts.getDirection === 'function' ? 'pass' : 'fail', 'Star.getDirection() exists');
+
+  // ===== CONSTELLATION CLASS =====
+  section('Constellation Class');
+  const orionData = consts.find(c => c.id === 'orion');
+  // Need a canvas context for Constellation to work
+  const testC = new CST.Constellation(orionData, new THREE.Texture());
+  log(testC.getCentroid() instanceof THREE.Vector3 ? 'pass' : 'fail', 'getCentroid() returns Vector3');
+  log(testC.getApparentDirection() instanceof THREE.Vector3 ? 'pass' : 'fail', 'getApparentDirection() returns Vector3');
+  log(typeof testC.getMedianDistance() === 'number' ? 'pass' : 'fail', `getMedianDistance() = ${testC.getMedianDistance()}`);
+  log(typeof testC.getNearestDistance() === 'number' ? 'pass' : 'fail', `getNearestDistance() = ${testC.getNearestDistance()}`);
+
+  // ===== BRIGHTEST STARS =====
+  section('Brightest Star Validation');
+  const known = {
+    orion: 'Rigel', canisMajor: 'Sirius', lyra: 'Vega', gemini: 'Pollux',
+    taurus: 'Aldebaran', leo: 'Regulus', scorpius: 'Antares', cygnus: 'Deneb',
+    canisMinor: 'Procyon', auriga: 'Capella', aquila: 'Altair', virgo: 'Spica'
+  };
+  let brightOk = true;
+  for (const [cid, name] of Object.entries(known)) {
+    const c = consts.find(x => x.id === cid);
+    if (!c) continue;
+    const brightest = [...c.stars].sort((a, b) => a.mag - b.mag)[0];
+    if (brightest.name !== name) { log('fail', `${c.name}: brightest=${brightest.name}, expected ${name}`); brightOk = false; }
+  }
+  if (brightOk) log('pass', `All ${Object.keys(known).length} brightest stars match`);
+
+  // ===== ADDENDUM =====
+  section('Addendum Data');
+  const addKeys = Object.keys(CST.starAddendum || {});
+  log(addKeys.length >= 30 ? 'pass' : 'fail', `${addKeys.length} stars with addendum (≥30)`);
+
+  // Check that addendum keys match actual star names
+  const allStarNames = new Set();
+  for (const c of consts) for (const s of c.stars) allStarNames.add(s.name);
+  let orphanAdd = 0;
+  for (const key of addKeys) {
+    if (!allStarNames.has(key)) { log('warn', `Addendum key "${key}" not found in star data`); orphanAdd++; }
+  }
+  if (orphanAdd === 0) log('pass', 'All addendum keys match star names');
+
+  // Check addendum structure
+  let structOk = true;
+  for (const [name, add] of Object.entries(CST.starAddendum || {})) {
+    if (!add.culture) { log('fail', `${name}: missing culture`); structOk = false; }
+    if (!add.translation) { log('fail', `${name}: missing translation`); structOk = false; }
+    if (!add.yearNamed) { log('fail', `${name}: missing yearNamed`); structOk = false; }
+    if (!Array.isArray(add.funFacts) || add.funFacts.length === 0) { log('fail', `${name}: empty funFacts`); structOk = false; }
+  }
+  if (structOk) log('pass', 'All addendum entries have culture, translation, yearNamed, funFacts');
+
+  // Constellation lore
+  const loreKeys = Object.keys(CST.constellationLore || {});
+  log(loreKeys.length >= 10 ? 'pass' : 'fail', `${loreKeys.length} constellations with lore (≥10)`);
+
+  // ===== NAMESPACE =====
+  section('CST Namespace');
+  const classes = ['Star','Constellation','Sky','Earth','Navigator','App'];
+  for (const cls of classes) {
+    log(typeof CST[cls] === 'function' ? 'pass' : 'fail', `CST.${cls} exists`);
+  }
+  log(typeof CST.DIST_SCALE === 'number' ? 'pass' : 'fail', 'CST.DIST_SCALE defined');
+  log(typeof CST.SPECTRAL_COLORS === 'object' ? 'pass' : 'fail', 'CST.SPECTRAL_COLORS defined');
+
+  // ===== UNIQUE IDS =====
+  section('Unique Constellation IDs');
+  const ids = consts.map(c => c.id);
+  log(new Set(ids).size === ids.length ? 'pass' : 'fail', `${ids.length} unique IDs`);
+
+  // ===== ANGULAR SPREAD FROM EARTH =====
+  section('Apparent Angular Spread (from Earth)');
+  for (const c of consts) {
+    const dirs = c.stars.map(s => new CST.Star(s).getDirection());
+    const centroid = new THREE.Vector3();
+    for (const d of dirs) centroid.add(d);
+    centroid.divideScalar(dirs.length).normalize();
+    let maxAngle = 0;
+    for (const d of dirs) {
+      const angle = Math.acos(Math.min(1, centroid.dot(d)));
+      if (angle > maxAngle) maxAngle = angle;
+    }
+    const spread = maxAngle * 180 / Math.PI * 2;
+    log(spread < 60 ? 'pass' : 'fail', `${c.name}: apparent spread ${spread.toFixed(1)}°`);
+  }
+
+  // ===== SUMMARY =====
+  const summary = document.getElementById('summary');
+  summary.className = `summary ${failed > 0 ? 'fail' : 'pass'}`;
+  summary.textContent = `Results: ${passed} passed, ${failed} failed, ${warnings} warnings`;
+})();
+</script>
+</body>
+</html>

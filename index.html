@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Constellation Explorer</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #000;
+  color: #ccc;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  overflow: hidden;
+  touch-action: none;
+}
+canvas { display: block; }
+
+/* Title */
+#title {
+  position: fixed;
+  top: 14px;
+  left: 18px;
+  font-size: 16px;
+  font-weight: 600;
+  color: rgba(150,190,255,0.7);
+  letter-spacing: 1px;
+  pointer-events: none;
+  z-index: 10;
+  text-transform: uppercase;
+}
+
+/* Speed HUD */
+#speed-hud {
+  position: fixed;
+  top: 14px;
+  right: 18px;
+  text-align: right;
+  font-size: 13px;
+  color: rgba(180,200,230,0.7);
+  z-index: 10;
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
+}
+#speed-hud .label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: rgba(150,170,200,0.5); }
+#speed-hud .val { font-size: 18px; font-weight: 600; color: rgba(100,180,255,0.85); }
+#dist-line { margin-top: 4px; }
+
+/* Controls panel */
+#controls {
+  position: fixed;
+  bottom: 16px;
+  left: 16px;
+  z-index: 20;
+  max-width: 340px;
+  max-height: 50vh;
+  overflow-y: auto;
+  background: rgba(10,15,30,0.85);
+  border: 1px solid rgba(80,120,180,0.25);
+  border-radius: 8px;
+  padding: 10px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+#btn-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 4px;
+}
+.cst-btn {
+  background: rgba(40,60,100,0.5);
+  border: 1px solid rgba(80,120,180,0.3);
+  border-radius: 5px;
+  color: rgba(140,170,220,0.9);
+  font-size: 11px;
+  padding: 6px 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cst-btn:hover {
+  background: rgba(50,80,140,0.6);
+  border-color: rgba(100,160,255,0.5);
+  color: #aaccff;
+}
+.cst-btn.active {
+  background: rgba(40,90,180,0.6);
+  border-color: rgba(100,180,255,0.8);
+  color: #ffffff;
+  font-weight: 600;
+}
+
+/* Hover tooltip */
+#hover-tip {
+  display: none;
+  position: fixed;
+  top: 50px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(10,15,30,0.8);
+  border: 1px solid rgba(80,120,180,0.3);
+  border-radius: 5px;
+  padding: 5px 12px;
+  font-size: 13px;
+  color: rgba(180,210,255,0.9);
+  pointer-events: none;
+  z-index: 15;
+  white-space: nowrap;
+}
+
+/* Star info panel */
+#star-info {
+  display: none;
+  position: fixed;
+  bottom: 16px;
+  right: 60px;
+  z-index: 25;
+  max-width: 360px;
+  max-height: 60vh;
+  overflow-y: auto;
+  background: rgba(8,12,25,0.92);
+  border: 1px solid rgba(80,120,180,0.35);
+  border-radius: 10px;
+  padding: 16px 18px;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+#star-info.active { display: block; }
+#star-info .si-close {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  background: none;
+  border: none;
+  color: rgba(140,170,220,0.6);
+  font-size: 18px;
+  cursor: pointer;
+}
+#star-info .si-close:hover { color: #aaccff; }
+#si-name {
+  font-size: 18px;
+  font-weight: 700;
+  color: rgba(140,190,255,0.95);
+  margin-bottom: 4px;
+}
+#si-type {
+  font-size: 13px;
+  margin-bottom: 3px;
+  font-weight: 500;
+}
+#si-dist {
+  font-size: 12px;
+  color: rgba(160,180,210,0.7);
+  margin-bottom: 8px;
+}
+#si-etym {
+  font-size: 11px;
+  color: rgba(140,180,130,0.85);
+  font-style: italic;
+  margin-bottom: 8px;
+  line-height: 1.4;
+}
+#si-desc {
+  font-size: 12px;
+  color: rgba(180,195,220,0.85);
+  line-height: 1.5;
+  margin-bottom: 8px;
+}
+#si-facts {
+  font-size: 11px;
+  color: rgba(160,180,210,0.75);
+  line-height: 1.5;
+  padding-left: 16px;
+  margin: 0;
+}
+#si-facts li { margin-bottom: 4px; }
+
+/* Help button */
+#help-btn {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: rgba(10,15,30,0.85);
+  border: 1px solid rgba(80,120,180,0.3);
+  color: rgba(140,170,220,0.8);
+  font-size: 18px;
+  cursor: pointer;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#help-btn:hover { border-color: rgba(100,160,255,0.6); color: #aaccff; }
+
+/* Help overlay */
+#help-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(0,0,0,0.85);
+  align-items: center;
+  justify-content: center;
+}
+#help-overlay.active { display: flex; }
+#help-content {
+  background: rgba(15,20,40,0.95);
+  border: 1px solid rgba(80,120,180,0.4);
+  border-radius: 12px;
+  padding: 28px 32px;
+  max-width: 440px;
+  color: rgba(180,200,230,0.9);
+  font-size: 14px;
+  line-height: 1.6;
+}
+#help-content h2 {
+  color: rgba(100,180,255,0.9);
+  font-size: 18px;
+  margin-bottom: 16px;
+}
+#help-content kbd {
+  background: rgba(60,80,120,0.5);
+  border: 1px solid rgba(80,120,180,0.4);
+  border-radius: 3px;
+  padding: 1px 6px;
+  font-size: 12px;
+  font-family: monospace;
+}
+#help-content .row { display: flex; justify-content: space-between; margin: 4px 0; }
+#help-content .row .key { min-width: 140px; }
+#help-close {
+  margin-top: 16px;
+  background: rgba(40,60,100,0.5);
+  border: 1px solid rgba(80,120,180,0.3);
+  border-radius: 5px;
+  color: #aaccff;
+  padding: 8px 20px;
+  cursor: pointer;
+  font-size: 13px;
+}
+#help-close:hover { background: rgba(50,80,140,0.6); }
+
+/* Earth mini-globe */
+#earth-globe {
+  position: fixed;
+  top: 86px;
+  right: 14px;
+  width: 110px;
+  height: 110px;
+  border-radius: 50%;
+  border: 1px solid rgba(80,120,180,0.2);
+  z-index: 10;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+/* Scrollbar */
+#controls::-webkit-scrollbar, #star-info::-webkit-scrollbar { width: 4px; }
+#controls::-webkit-scrollbar-thumb, #star-info::-webkit-scrollbar-thumb { background: rgba(80,120,180,0.3); border-radius: 2px; }
+
+/* Mobile */
+@media (max-width: 768px) {
+  #title { font-size: 13px; top: 10px; left: 12px; }
+  #speed-hud { top: 10px; right: 12px; font-size: 11px; }
+  #speed-hud .val { font-size: 14px; }
+  #controls { bottom: 10px; left: 10px; right: 10px; max-width: none; }
+  #btn-grid { grid-template-columns: 1fr 1fr 1fr; gap: 3px; }
+  .cst-btn { font-size: 10px; padding: 5px 3px; }
+  #help-btn { bottom: 10px; right: 10px; width: 30px; height: 30px; font-size: 15px; }
+  #star-info { bottom: auto; top: 50px; left: 10px; right: 10px; max-width: none; }
+  #earth-globe { top: 66px; right: 10px; width: 80px; height: 80px; }
+}
+</style>
+</head>
+<body>
+
+<div id="title">Constellation Explorer</div>
+
+<div id="speed-hud">
+  <div><span class="label">Speed</span></div>
+  <div class="val" id="speed-val">Stationary</div>
+  <div id="dist-line"><span class="label">From Earth</span></div>
+  <div class="val" id="dist-val">0 ly</div>
+</div>
+
+<div id="earth-globe"></div>
+<div id="hover-tip"></div>
+
+<div id="controls">
+  <div id="btn-grid"></div>
+</div>
+
+<div id="star-info">
+  <button class="si-close" onclick="document.getElementById('star-info').classList.remove('active')">&times;</button>
+  <div id="si-name"></div>
+  <div id="si-type"></div>
+  <div id="si-dist"></div>
+  <div id="si-etym"></div>
+  <div id="si-desc"></div>
+  <ul id="si-facts"></ul>
+</div>
+
+<button id="help-btn">?</button>
+
+<div id="help-overlay">
+  <div id="help-content">
+    <h2>Controls</h2>
+    <div class="row"><span class="key"><kbd>W</kbd> / <kbd>↑</kbd></span> Fly forward</div>
+    <div class="row"><span class="key"><kbd>S</kbd> / <kbd>↓</kbd></span> Fly backward</div>
+    <div class="row"><span class="key"><kbd>A</kbd> / <kbd>←</kbd></span> Strafe left</div>
+    <div class="row"><span class="key"><kbd>D</kbd> / <kbd>→</kbd></span> Strafe right</div>
+    <div class="row"><span class="key"><kbd>Q</kbd> / <kbd>E</kbd></span> Roll left / right</div>
+    <div class="row"><span class="key"><kbd>Space</kbd></span> Move up (local)</div>
+    <div class="row"><span class="key"><kbd>Shift</kbd></span> Speed boost (4×)</div>
+    <div class="row"><span class="key">Mouse drag</span> Look around</div>
+    <div class="row"><span class="key"><kbd>Shift</kbd>+drag</span> Roll</div>
+    <div class="row"><span class="key">Scroll</span> Zoom forward / back</div>
+    <div class="row"><span class="key">Click star</span> Star info</div>
+    <div class="row"><span class="key"><kbd>O</kbd></span> Toggle figure overlays</div>
+    <div class="row"><span class="key"><kbd>Esc</kbd></span> Close panels</div>
+    <br>
+    <div>Click a constellation to view it from Earth. Use WASD to fly into the stars and see their real 3D depth — some stars in the same constellation are 10× farther than others!</div>
+    <br>
+    <button id="help-close">Got it</button>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="js/data.js"></script>
+<script src="js/addendum.js"></script>
+<script src="js/Star.js"></script>
+<script src="js/Constellation.js"></script>
+<script src="js/Sky.js"></script>
+<script src="js/Earth.js"></script>
+<script src="js/Navigator.js"></script>
+<script src="js/App.js"></script>
+<script>
+  window.addEventListener('DOMContentLoaded', () => {
+    window.app = new CST.App();
+  });
+</script>
+</body>
+</html>
