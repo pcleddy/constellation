@@ -1,8 +1,8 @@
 # Constellation Explorer
 
-Explore constellations from Earth, then fly into them to see the real 3D spread of their stars.
-
 Live app: [https://pcleddy.github.io/constellation/](https://pcleddy.github.io/constellation/)
+
+Explore constellations from Earth, then fly into them to see the real 3D spread of their stars.
 
 ## What It Does
 
@@ -10,7 +10,7 @@ Constellation Explorer is a lightweight Three.js app that renders a curated nigh
 
 - pick a constellation from the control panel
 - fly through the star field with first-person controls
-- click stars to open info panels with distance, spectral type, and lore
+- click stars to center the scene on them and open info panels with distance, spectral type, and lore
 
 The app is static and has no build step, server code, or package manager setup.
 
@@ -29,10 +29,12 @@ If your browser is happier with a local server, you can also run a simple static
 - `Q` / `E`: roll left / right
 - `Space`: move up along your local up axis
 - `Shift`: speed boost
-- mouse drag: look around
+- mouse drag: look around, or orbit a focused star
 - `Shift` + drag: roll
 - scroll: move forward / backward
-- click star: open star info
+- click star: focus that star and open star info
+- focused star: two-finger swipe or arrow keys orbit around it
+- focused star: `W` / `S` or `Shift` + scroll zoom the orbit
 - `Esc`: close help or info panels
 
 ## Tech Stack

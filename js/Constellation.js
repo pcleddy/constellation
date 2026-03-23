@@ -13,12 +13,15 @@ CST.Constellation = class Constellation {
     this.label = null;
     this._dimOpacity = 0.35;
     this._brightOpacity = 0.85;
+    this._labelWorldPos = new THREE.Vector3();
     this._build(starTexture);
   }
 
   _build(starTexture) {
     // Stars
     for (const star of this.stars) {
+      star.constellationId = this.id;
+      star.constellationName = this.name;
       this.group.add(star.createSprite(starTexture));
     }
 
@@ -92,7 +95,8 @@ CST.Constellation = class Constellation {
   }
 
   _updateLabelScale(camera, viewportHeight, isActive) {
-    const dist = camera.position.distanceTo(this.label.position);
+    this.label.getWorldPosition(this._labelWorldPos);
+    const dist = camera.position.distanceTo(this._labelWorldPos);
     const aspect = this.label.userData.aspect || 3;
     const fovRad = THREE.MathUtils.degToRad(camera.fov);
     const worldUnitsPerPx = (2 * dist * Math.tan(fovRad / 2)) / viewportHeight;
@@ -104,7 +108,8 @@ CST.Constellation = class Constellation {
 
   _updateLabelOpacity(cameraPos, isActive) {
     if (!this.label) return;
-    const d = cameraPos.distanceTo(this.label.position);
+    this.label.getWorldPosition(this._labelWorldPos);
+    const d = cameraPos.distanceTo(this._labelWorldPos);
     const baseDist = this.label.userData.baseDist || 100;
     const fullOpacity = isActive ? 0.92 : 0.58;
     // Let the active label stay readable while approaching the stars, and only

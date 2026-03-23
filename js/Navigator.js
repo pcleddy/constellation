@@ -24,6 +24,9 @@ CST.Navigator = class Navigator {
     this.moveSpeed = 5;
     this.currentSpeed = 0;
     this._prevPos = this.position.clone();
+    this.orbitEnabled = false;
+    this.orbitTarget = new THREE.Vector3();
+    this.orbitRadius = 0;
 
     // Pointer state for screen-space star interaction
     this.pointerPx = new THREE.Vector2(-1, -1);
@@ -87,6 +90,17 @@ CST.Navigator = class Navigator {
     // Scroll = move forward/back
     this.dom.addEventListener('wheel', e => {
       e.preventDefault();
+      if (this.orbitEnabled && e.shiftKey) {
+        this._zoomOrbit(e.deltaY * 0.01);
+        return;
+      }
+      if (this.orbitEnabled && !e.shiftKey) {
+        this.targetYaw -= e.deltaX * 0.003;
+        this.targetPitch += e.deltaY * 0.003;
+        this.targetPitch = THREE.MathUtils.clamp(this.targetPitch, -1.45, 1.45);
+        this._applyOrbitTargetPosition();
+        return;
+      }
       const fwd = this._forwardVec();
       const speed = Math.max(1, this.moveSpeed * 0.3);
       this.targetPosition.addScaledVector(fwd, -e.deltaY * 0.005 * speed);
@@ -122,9 +136,13 @@ CST.Navigator = class Navigator {
         const dy = e.touches[0].clientY - e.touches[1].clientY;
         const dist = Math.sqrt(dx * dx + dy * dy);
         if (_pinchDist > 0) {
-          const fwd = this._forwardVec();
           const delta = (dist - _pinchDist) * 0.5;
-          this.targetPosition.addScaledVector(fwd, delta);
+          if (this.orbitEnabled) {
+            this._zoomOrbit(-delta * 0.1);
+          } else {
+            const fwd = this._forwardVec();
+            this.targetPosition.addScaledVector(fwd, delta);
+          }
         }
         _pinchDist = dist;
       }
@@ -146,9 +164,9 @@ CST.Navigator = class Navigator {
     this.pointerPx.set(x, y);
   }
 
-  _forwardVec() {
+  _forwardVec(pitch = this.pitch, yaw = this.yaw, roll = this.roll) {
     const dir = new THREE.Vector3(0, 0, -1);
-    dir.applyEuler(new THREE.Euler(this.pitch, this.yaw, this.roll, 'YXZ'));
+    dir.applyEuler(new THREE.Euler(pitch, yaw, roll, 'YXZ'));
     return dir;
   }
 
@@ -164,9 +182,8 @@ CST.Navigator = class Navigator {
     return dir;
   }
 
-  _getStarPickRadiusPx(sprite, viewportHeight) {
+  _getStarPickRadiusPx(sprite, viewportHeight, distToCamera) {
     const spriteSize = sprite.scale.x || sprite.userData.star.getSize();
-    const distToCamera = this.camera.position.distanceTo(sprite.position);
     if (distToCamera <= 0) return 18;
 
     const fovRad = THREE.MathUtils.degToRad(this.camera.fov);
@@ -185,11 +202,14 @@ CST.Navigator = class Navigator {
 
     let bestStar = null;
     let bestDistPx = Infinity;
+    const worldPos = new THREE.Vector3();
+    const projected = new THREE.Vector3();
 
     this.scene.traverse(obj => {
       if (!obj.isSprite || !obj.userData.star) return;
 
-      const projected = obj.position.clone().project(this.camera);
+      obj.getWorldPosition(worldPos);
+      projected.copy(worldPos).project(this.camera);
       if (
         projected.z < -1 || projected.z > 1 ||
         Math.abs(projected.x) > 1 || Math.abs(projected.y) > 1
@@ -198,7 +218,11 @@ CST.Navigator = class Navigator {
       const sx = (projected.x * 0.5 + 0.5) * rect.width;
       const sy = (-projected.y * 0.5 + 0.5) * rect.height;
       const distPx = Math.hypot(this.pointerPx.x - sx, this.pointerPx.y - sy);
-      const pickRadiusPx = this._getStarPickRadiusPx(obj, rect.height);
+      const pickRadiusPx = this._getStarPickRadiusPx(
+        obj,
+        rect.height,
+        this.camera.position.distanceTo(worldPos)
+      );
 
       if (distPx <= pickRadiusPx && distPx < bestDistPx) {
         bestDistPx = distPx;
@@ -238,14 +262,68 @@ CST.Navigator = class Navigator {
     this._lookAlong(dir);
   }
 
+  flyToPoint(position, lookAtPoint) {
+    this.targetPosition.copy(position);
+    if (lookAtPoint) {
+      this._lookAlong(lookAtPoint.clone().sub(position));
+    }
+  }
+
+  translateReference(delta) {
+    this.position.add(delta);
+    this.targetPosition.add(delta);
+    this._prevPos.add(delta);
+    if (this.orbitEnabled) {
+      this.orbitTarget.add(delta);
+    }
+    this.camera.position.copy(this.position);
+  }
+
+  _syncOrbitFromTargetPosition(snapLook) {
+    const toTarget = this.orbitTarget.clone().sub(this.targetPosition);
+    const dist = toTarget.length();
+    if (dist <= 1e-6) return;
+
+    const viewDir = toTarget.normalize();
+    this.orbitRadius = dist;
+    this.targetYaw = Math.atan2(-viewDir.x, -viewDir.z);
+    this.targetPitch = Math.asin(Math.max(-1, Math.min(1, viewDir.y)));
+    if (snapLook) {
+      this.yaw = this.targetYaw;
+      this.pitch = this.targetPitch;
+    }
+  }
+
+  _applyOrbitTargetPosition() {
+    const forward = this._forwardVec(this.targetPitch, this.targetYaw, 0);
+    this.targetPosition.copy(this.orbitTarget).addScaledVector(forward, -this.orbitRadius);
+  }
+
+  _zoomOrbit(deltaRadius) {
+    this.orbitRadius = Math.max(0.5, this.orbitRadius + deltaRadius);
+    this._applyOrbitTargetPosition();
+  }
+
+  enableOrbit(target, snapLook) {
+    this.orbitTarget.copy(target);
+    this.orbitEnabled = true;
+    this._syncOrbitFromTargetPosition(!!snapLook);
+  }
+
+  disableOrbit() {
+    this.orbitEnabled = false;
+  }
+
   flyToConstellation(constellation) {
     // Place camera on Earth's surface closest to the constellation,
     // so Earth is always behind the viewer (fixes southern constellations like Carina)
     const dir = constellation.getApparentDirection();
+    this.disableOrbit();
     this.flyToEarthLocation(dir);
   }
 
   resetToOrigin() {
+    this.disableOrbit();
     this.targetPosition.set(0, 3, 0); // above north pole
     this.targetYaw = 0;
     this.targetPitch = 0.3;
@@ -258,16 +336,38 @@ CST.Navigator = class Navigator {
     const right = this._rightVec();
     const up = this._upVec();
 
-    if (this.keys['KeyW'] || this.keys['ArrowUp']) {
+    if (this.orbitEnabled) {
+      const orbitSpeed = dt * 1.6;
+      if (this.keys['ArrowLeft'] || this.keys['KeyA']) {
+        this.targetYaw += orbitSpeed;
+      }
+      if (this.keys['ArrowRight'] || this.keys['KeyD']) {
+        this.targetYaw -= orbitSpeed;
+      }
+      if (this.keys['ArrowUp']) {
+        this.targetPitch += orbitSpeed * 0.7;
+      }
+      if (this.keys['ArrowDown']) {
+        this.targetPitch -= orbitSpeed * 0.7;
+      }
+      if (this.keys['KeyW']) {
+        this._zoomOrbit(-speed);
+      }
+      if (this.keys['KeyS']) {
+        this._zoomOrbit(speed);
+      }
+      this.targetPitch = THREE.MathUtils.clamp(this.targetPitch, -1.45, 1.45);
+      this._applyOrbitTargetPosition();
+    } else if (this.keys['KeyW'] || this.keys['ArrowUp']) {
       this.targetPosition.addScaledVector(fwd, speed);
     }
-    if (this.keys['KeyS'] || this.keys['ArrowDown']) {
+    if (!this.orbitEnabled && (this.keys['KeyS'] || this.keys['ArrowDown'])) {
       this.targetPosition.addScaledVector(fwd, -speed);
     }
-    if (this.keys['KeyA'] || this.keys['ArrowLeft']) {
+    if (!this.orbitEnabled && (this.keys['KeyA'] || this.keys['ArrowLeft'])) {
       this.targetPosition.addScaledVector(right, -speed);
     }
-    if (this.keys['KeyD'] || this.keys['ArrowRight']) {
+    if (!this.orbitEnabled && (this.keys['KeyD'] || this.keys['ArrowRight'])) {
       this.targetPosition.addScaledVector(right, speed);
     }
     if (this.keys['KeyQ']) {

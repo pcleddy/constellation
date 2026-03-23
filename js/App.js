@@ -5,6 +5,7 @@ CST.App = class App {
   constructor() {
     this.clock = new THREE.Clock();
     this.activeConstellation = null;
+    this.focusName = 'Earth';
 
     // Renderer
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
@@ -69,6 +70,8 @@ CST.App = class App {
     document.getElementById('help-close').addEventListener('click', () => {
       document.getElementById('help-overlay').classList.remove('active');
     });
+
+    this._updateDistanceReferenceLabel();
   }
 
   _bindResize() {
@@ -88,10 +91,54 @@ CST.App = class App {
     });
   }
 
+  _updateConstellationButtons(activeId) {
+    document.querySelectorAll('.cst-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.id === activeId);
+    });
+  }
+
+  _updateDistanceReferenceLabel() {
+    const label = document.getElementById('dist-label');
+    if (!label) return;
+    label.textContent = 'From ' + this.focusName;
+  }
+
+  _recenterReferenceToWorldPoint(worldPoint) {
+    const delta = worldPoint.clone().negate();
+    this.sky.group.position.add(delta);
+    this.earth.group.position.add(delta);
+    this.nav.translateReference(delta);
+  }
+
+  _focusOnEarth() {
+    this.nav.disableOrbit();
+    const earthWorld = new THREE.Vector3();
+    this.earth.group.getWorldPosition(earthWorld);
+    if (earthWorld.lengthSq() > 1e-10) {
+      this._recenterReferenceToWorldPoint(earthWorld);
+    }
+    this.focusName = 'Earth';
+    this._updateDistanceReferenceLabel();
+  }
+
+  _focusOnStar(star) {
+    if (!star || !star.mesh) return;
+
+    this.nav.disableOrbit();
+    const starWorld = new THREE.Vector3();
+    star.mesh.getWorldPosition(starWorld);
+    this._recenterReferenceToWorldPoint(starWorld);
+    this.nav.enableOrbit(new THREE.Vector3(0, 0, 0), true);
+
+    this.focusName = star.name;
+    this._updateDistanceReferenceLabel();
+  }
+
   selectConstellation(id) {
     const c = this.sky.getConstellation(id);
     if (!c) return;
 
+    this._focusOnEarth();
     this.activeConstellation = id;
     this.sky.highlightOnly(id);
     const earthView = this._getEarthViewForDirection(c.getApparentDirection());
@@ -103,11 +150,7 @@ CST.App = class App {
     this._showConstellationInfo(c);
 
     this._updateGlobe(earthView);
-
-    // Update buttons
-    document.querySelectorAll('.cst-btn').forEach(btn => {
-      btn.classList.toggle('active', btn.dataset.id === id);
-    });
+    this._updateConstellationButtons(id);
   }
 
   _onStarHover(star) {
@@ -185,6 +228,20 @@ CST.App = class App {
       info.desc = 'A plotted member of this constellation in the 3D sky explorer.';
     }
 
+    info.facts = [
+      'Scene centered on this star for local exploration.',
+      'Drag, two-finger swipe, or use arrow keys to orbit around it.',
+      ...(info.facts || [])
+    ];
+
+    if (star.constellationId) {
+      this.activeConstellation = star.constellationId;
+      this.sky.highlightOnly(star.constellationId);
+      this._updateConstellationButtons(star.constellationId);
+    }
+
+    this._focusOnStar(star);
+    this._updateGlobe(null);
     this._showInfoPanel(info);
   }
 

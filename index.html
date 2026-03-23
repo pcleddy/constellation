@@ -292,7 +292,7 @@ canvas { display: block; }
 <div id="speed-hud">
   <div><span class="label">Speed</span></div>
   <div class="val" id="speed-val">Stationary</div>
-  <div id="dist-line"><span class="label">From Earth</span></div>
+  <div id="dist-line"><span class="label" id="dist-label">From Earth</span></div>
   <div class="val" id="dist-val">0 ly</div>
 </div>
 
@@ -326,10 +326,11 @@ canvas { display: block; }
     <div class="row"><span class="key"><kbd>Q</kbd> / <kbd>E</kbd></span> Roll left / right</div>
     <div class="row"><span class="key"><kbd>Space</kbd></span> Move up (local)</div>
     <div class="row"><span class="key"><kbd>Shift</kbd></span> Speed boost (4×)</div>
-    <div class="row"><span class="key">Mouse drag</span> Look around</div>
+    <div class="row"><span class="key">Mouse drag</span> Look around or orbit focused star</div>
     <div class="row"><span class="key"><kbd>Shift</kbd>+drag</span> Roll</div>
     <div class="row"><span class="key">Scroll</span> Zoom forward / back</div>
-    <div class="row"><span class="key">Click star</span> Star info</div>
+    <div class="row"><span class="key">Click star</span> Focus star + info</div>
+    <div class="row"><span class="key">Focused star</span> Two-finger swipe or arrows orbit it</div>
     <div class="row"><span class="key"><kbd>Esc</kbd></span> Close panels</div>
     <br>
     <div>Click a constellation to view it from Earth. Use WASD to fly into the stars and see their real 3D depth — some stars in the same constellation are 10× farther than others!</div>

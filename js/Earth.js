@@ -10,8 +10,10 @@ CST.Earth = class Earth {
   }
 
   _build() {
+    const earthRadius = 0.04;
+
     // Main sphere — procedural blue/green
-    const geom = new THREE.SphereGeometry(2, 48, 48);
+    const geom = new THREE.SphereGeometry(earthRadius, 48, 48);
     const can = document.createElement('canvas');
     can.width = 256; can.height = 128;
     const ctx = can.getContext('2d');
@@ -45,7 +47,7 @@ CST.Earth = class Earth {
     this.group.add(this.sphere);
 
     // Atmosphere glow
-    const glowGeom = new THREE.SphereGeometry(2.15, 48, 48);
+    const glowGeom = new THREE.SphereGeometry(earthRadius * 1.075, 48, 48);
     const glowMat = new THREE.MeshBasicMaterial({
       color: 0x4488cc,
       transparent: true,
