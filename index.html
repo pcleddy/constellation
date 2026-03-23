@@ -61,6 +61,13 @@ canvas { display: block; }
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
 }
+#controls .section-title {
+  margin: 0 0 6px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: rgba(150,170,200,0.55);
+}
 #btn-grid {
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;
@@ -253,7 +260,8 @@ canvas { display: block; }
   width: 110px;
   height: 110px;
   border-radius: 50%;
-  border: 1px solid rgba(80,120,180,0.2);
+  border: 1px solid rgba(120,170,230,0.45);
+  box-shadow: 0 0 22px rgba(70,140,220,0.18);
   z-index: 10;
   pointer-events: none;
   overflow: hidden;
@@ -292,6 +300,7 @@ canvas { display: block; }
 <div id="hover-tip"></div>
 
 <div id="controls">
+  <div class="section-title">Constellations</div>
   <div id="btn-grid"></div>
 </div>
 
@@ -321,7 +330,6 @@ canvas { display: block; }
     <div class="row"><span class="key"><kbd>Shift</kbd>+drag</span> Roll</div>
     <div class="row"><span class="key">Scroll</span> Zoom forward / back</div>
     <div class="row"><span class="key">Click star</span> Star info</div>
-    <div class="row"><span class="key"><kbd>O</kbd></span> Toggle figure overlays</div>
     <div class="row"><span class="key"><kbd>Esc</kbd></span> Close panels</div>
     <br>
     <div>Click a constellation to view it from Earth. Use WASD to fly into the stars and see their real 3D depth — some stars in the same constellation are 10× farther than others!</div>

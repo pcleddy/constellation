@@ -85,13 +85,7 @@ CST.App = class App {
         document.getElementById('help-overlay').classList.remove('active');
         document.getElementById('star-info').classList.remove('active');
       }
-      // O = toggle constellation figure overlays
-      if (e.code === 'KeyO' && !e.target.closest('input, textarea')) {
-        this.showOverlays = !this.showOverlays;
-        this.sky.toggleOverlays(this.showOverlays);
-      }
     });
-    this.showOverlays = false;
   }
 
   selectConstellation(id) {
@@ -100,17 +94,15 @@ CST.App = class App {
 
     this.activeConstellation = id;
     this.sky.highlightOnly(id);
+    const earthView = this._getEarthViewForDirection(c.getApparentDirection());
     this.nav.flyToConstellation(c);
 
-    // Show constellation lore if available
-    this._showConstellationLore(id);
+    const tip = document.getElementById('hover-tip');
+    tip.style.display = 'none';
+    document.body.style.cursor = 'default';
+    this._showConstellationInfo(c);
 
-    // Update Earth mini-globe — show best viewing latitude
-    let avgRA = 0, avgDecDeg = 0;
-    for (const s of c.stars) { avgRA += s.ra; avgDecDeg += s.dec; }
-    avgRA /= c.stars.length;
-    avgDecDeg /= c.stars.length;
-    this._updateGlobe({ ra: avgRA, dec: avgDecDeg });
+    this._updateGlobe(earthView);
 
     // Update buttons
     document.querySelectorAll('.cst-btn').forEach(btn => {
@@ -130,7 +122,7 @@ CST.App = class App {
     }
   }
 
-  _onStarClick(star) {
+  _showInfoPanel(info) {
     const panel = document.getElementById('star-info');
     const nameEl = document.getElementById('si-name');
     const typeEl = document.getElementById('si-type');
@@ -139,47 +131,103 @@ CST.App = class App {
     const descEl = document.getElementById('si-desc');
     const factsEl = document.getElementById('si-facts');
 
-    nameEl.textContent = star.name;
-    typeEl.textContent = star.spectral + '-type · mag ' + star.mag.toFixed(2);
-    typeEl.style.color = star.getColor();
-    distEl.textContent = star.dist_ly.toLocaleString() + ' light-years from Earth';
+    nameEl.textContent = info.name || '';
+    typeEl.textContent = info.type || '';
+    typeEl.style.color = info.typeColor || 'rgba(180,200,230,0.9)';
 
-    // Load addendum data if available
-    const add = CST.starAddendum ? CST.starAddendum[star.name] : null;
-    if (add) {
-      etymEl.textContent = add.culture + ', ' + add.yearNamed + ' · "' + add.translation + '"';
+    distEl.textContent = info.meta || '';
+    distEl.style.display = info.meta ? 'block' : 'none';
+
+    if (info.kicker) {
+      etymEl.textContent = info.kicker;
       etymEl.style.display = 'block';
-      descEl.textContent = add.desc;
-      descEl.style.display = 'block';
-      factsEl.innerHTML = '';
-      if (add.funFacts && add.funFacts.length) {
-        for (const fact of add.funFacts) {
-          const li = document.createElement('li');
-          li.textContent = fact;
-          factsEl.appendChild(li);
-        }
-        factsEl.style.display = 'block';
-      } else {
-        factsEl.style.display = 'none';
-      }
     } else {
       etymEl.style.display = 'none';
+    }
+
+    if (info.desc) {
+      descEl.textContent = info.desc;
+      descEl.style.display = 'block';
+    } else {
       descEl.style.display = 'none';
+    }
+
+    factsEl.innerHTML = '';
+    if (info.facts && info.facts.length) {
+      for (const fact of info.facts) {
+        const li = document.createElement('li');
+        li.textContent = fact;
+        factsEl.appendChild(li);
+      }
+      factsEl.style.display = 'block';
+    } else {
       factsEl.style.display = 'none';
     }
 
     panel.classList.add('active');
   }
 
-  _showConstellationLore(id) {
-    if (!CST.constellationLore) return;
-    const lore = CST.constellationLore[id];
-    if (!lore) return;
-    // Could show in a separate panel — for now, brief display in hover tip
-    const tip = document.getElementById('hover-tip');
-    tip.textContent = lore.bestViewing || '';
-    tip.style.display = lore.bestViewing ? 'block' : 'none';
-    setTimeout(() => { if (tip.textContent === lore.bestViewing) tip.style.display = 'none'; }, 3000);
+  _onStarClick(star) {
+    const info = {
+      name: star.name,
+      type: star.spectral + '-type · mag ' + star.mag.toFixed(2),
+      typeColor: star.getColor(),
+      meta: star.dist_ly.toLocaleString() + ' light-years from Earth'
+    };
+
+    // Load addendum data if available
+    const add = CST.starAddendum ? CST.starAddendum[star.name] : null;
+    if (add) {
+      info.kicker = add.culture + ', ' + add.yearNamed + ' · "' + add.translation + '"';
+      info.desc = add.desc;
+      info.facts = add.funFacts || [];
+    } else {
+      info.desc = 'A plotted member of this constellation in the 3D sky explorer.';
+    }
+
+    this._showInfoPanel(info);
+  }
+
+  _showConstellationInfo(constellation) {
+    const lore = CST.constellationLore ? CST.constellationLore[constellation.id] : null;
+    const brightest = [...constellation.stars].sort((a, b) => a.mag - b.mag)[0];
+    const nearest = Math.round(constellation.getNearestDistance());
+    const median = Math.round(constellation.getMedianDistance());
+    const info = {
+      name: constellation.name,
+      type: 'Constellation · ' + constellation.stars.length + ' mapped stars',
+      typeColor: 'rgba(140,190,255,0.92)',
+      meta: 'Brightest star: ' + brightest.name + ' · nearest member ' +
+        nearest.toLocaleString() + ' ly · median distance ' + median.toLocaleString() + ' ly',
+      desc: 'Select individual stars to see their names, types, distances, and lore.'
+    };
+
+    if (lore) {
+      info.kicker = lore.culture + (lore.bestViewing ? ' · Best viewing: ' + lore.bestViewing : '');
+      info.desc = lore.myth || info.desc;
+      info.facts = lore.funFacts || [];
+    } else {
+      info.facts = [
+        'Use click-and-drag to look around this region of sky.',
+        'Fly forward to reveal how spread out the member stars are in 3D space.'
+      ];
+    }
+
+    this._showInfoPanel(info);
+  }
+
+  _getEarthViewForDirection(direction) {
+    const dir = direction.clone().normalize();
+    const latRad = Math.asin(THREE.MathUtils.clamp(dir.y, -1, 1));
+    const lonRad = Math.atan2(-dir.z, dir.x);
+
+    return {
+      direction: dir,
+      latRad,
+      lonRad,
+      latDeg: THREE.MathUtils.radToDeg(latRad),
+      lonDeg: THREE.MathUtils.radToDeg(lonRad)
+    };
   }
 
   _initGlobe() {
@@ -209,7 +257,7 @@ CST.App = class App {
     // Atmosphere glow
     const glowGeom = new THREE.SphereGeometry(1.06, 48, 48);
     const glowMat = new THREE.MeshBasicMaterial({
-      color: 0x4488cc, transparent: true, opacity: 0.1, side: THREE.BackSide
+      color: 0x5daeff, transparent: true, opacity: 0.16, side: THREE.BackSide
     });
     this.globeScene.add(new THREE.Mesh(glowGeom, glowMat));
 
@@ -243,13 +291,34 @@ CST.App = class App {
 
     // Viewing position dot (hidden until constellation selected)
     const dotMat = new THREE.SpriteMaterial({
-      color: 0x44aaff, transparent: true, opacity: 0.95,
-      map: this.sky.starTexture, blending: THREE.AdditiveBlending
+      color: 0xb8ecff,
+      transparent: true,
+      opacity: 1,
+      map: this.sky.starTexture,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      depthTest: false
     });
     this.globeDot = new THREE.Sprite(dotMat);
-    this.globeDot.scale.set(0.18, 0.18, 1);
+    this.globeDot.scale.set(0.26, 0.26, 1);
     this.globeDot.visible = false;
-    this.globeScene.add(this.globeDot);
+    this.globeDot.renderOrder = 20;
+    this.globeEarth.add(this.globeDot);
+
+    const dotGlowMat = new THREE.SpriteMaterial({
+      color: 0x59c8ff,
+      transparent: true,
+      opacity: 0.4,
+      map: this.sky.starTexture,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      depthTest: false
+    });
+    this.globeDotGlow = new THREE.Sprite(dotGlowMat);
+    this.globeDotGlow.scale.set(0.46, 0.46, 1);
+    this.globeDotGlow.visible = false;
+    this.globeDotGlow.renderOrder = 19;
+    this.globeEarth.add(this.globeDotGlow);
 
     // Visibility ring around dot
     this.globeRing = null;
@@ -372,6 +441,7 @@ CST.App = class App {
   _updateGlobe(info) {
     if (!info) {
       this.globeDot.visible = false;
+      if (this.globeDotGlow) this.globeDotGlow.visible = false;
       if (this.globeRing) this.globeRing.visible = false;
       this._globeInfo = null;
       return;
@@ -380,45 +450,49 @@ CST.App = class App {
     // Store for use in _animate (freeze check, dot orientation)
     this._globeInfo = info;
 
-    // Place dot on globe surface at latitude = dec, longitude derived from RA
-    // RA hours → longitude: lon = -(RA / 24) * 360 (negative because RA goes east)
-    const latRad = info.dec * Math.PI / 180;
-    const lonRad = -(info.ra / 24) * Math.PI * 2;
     const R = 1.08; // just above surface
-    this.globeDot.position.set(
-      R * Math.cos(latRad) * Math.sin(lonRad),
-      R * Math.sin(latRad),
-      R * Math.cos(latRad) * Math.cos(lonRad)
-    );
+    const surfacePoint = info.direction.clone().normalize().multiplyScalar(R);
+    this.globeDot.position.copy(surfacePoint);
     this.globeDot.visible = true;
+    if (this.globeDotGlow) {
+      this.globeDotGlow.position.copy(this.globeDot.position);
+      this.globeDotGlow.visible = true;
+    }
 
-    // Rotate globe so the dot faces the camera (toward the viewer)
-    // Use the dot's longitude to rotate the globe so it's front-facing
-    this._globeTargetRotY = -lonRad + Math.PI; // +PI to face toward camera, not away
+    // Rotate the whole globe so the selected Earth-facing point faces the viewer.
+    this._globeTargetRotY = -Math.atan2(surfacePoint.x, surfacePoint.z);
 
     // Visibility ring
-    if (this.globeRing) this.globeScene.remove(this.globeRing);
+    if (this.globeRing) this.globeEarth.remove(this.globeRing);
     const ringPts = [];
     const ringR = 0.35; // angular radius on sphere
+    const centerDir = surfacePoint.clone().normalize();
+    let tangent = new THREE.Vector3(0, 1, 0).cross(centerDir);
+    if (tangent.lengthSq() < 1e-6) {
+      tangent = new THREE.Vector3(1, 0, 0).cross(centerDir);
+    }
+    tangent.normalize();
+    const bitangent = centerDir.clone().cross(tangent).normalize();
     for (let i = 0; i <= 48; i++) {
       const a = (i / 48) * Math.PI * 2;
-      // Small circle on sphere around the point
-      const dx = ringR * Math.cos(a);
-      const dy = ringR * Math.sin(a);
-      const lat2 = latRad + dy;
-      const lon2 = lonRad + dx / Math.cos(latRad + 0.001);
-      ringPts.push(new THREE.Vector3(
-        1.05 * Math.cos(lat2) * Math.sin(lon2),
-        1.05 * Math.sin(lat2),
-        1.05 * Math.cos(lat2) * Math.cos(lon2)
-      ));
+      const ringPoint = centerDir.clone().multiplyScalar(Math.cos(ringR))
+        .addScaledVector(tangent, Math.sin(ringR) * Math.cos(a))
+        .addScaledVector(bitangent, Math.sin(ringR) * Math.sin(a))
+        .normalize()
+        .multiplyScalar(1.05);
+      ringPts.push(ringPoint);
     }
     const ringGeom = new THREE.BufferGeometry().setFromPoints(ringPts);
     const ringMat = new THREE.LineBasicMaterial({
-      color: 0x44aaff, transparent: true, opacity: 0.3, depthWrite: false
+      color: 0x9fe4ff,
+      transparent: true,
+      opacity: 0.82,
+      depthWrite: false,
+      depthTest: false
     });
     this.globeRing = new THREE.Line(ringGeom, ringMat);
-    this.globeScene.add(this.globeRing);
+    this.globeRing.renderOrder = 18;
+    this.globeEarth.add(this.globeRing);
   }
 
   _animate() {
@@ -428,10 +502,10 @@ CST.App = class App {
     this.nav.update(dt);
     this.earth.update(dt);
 
-    // Fade constellation labels based on camera proximity
-    const camPos = this.nav.position;
+    // Keep constellation labels readable without letting them fill the screen
+    const viewportHeight = this.renderer.domElement.clientHeight || window.innerHeight;
     for (const c of Object.values(this.sky.constellations)) {
-      c.updateLabelOpacity(camPos);
+      c.updateLabel(this.camera, viewportHeight, c.id === this.activeConstellation);
     }
 
     // Speed HUD — rounded to nearest 0.25 ly/yr (c)
@@ -469,32 +543,18 @@ CST.App = class App {
 
     // Render mini-globe
     if (this.globeEarth) {
-      const distFromEarth = this.nav.getDistFromEarth();
+      this.globeEarth.material.opacity = 1;
+      this.globeEarth.material.transparent = false;
+      if (this.globeDot) this.globeDot.material.opacity = 1;
+      if (this.globeDotGlow) this.globeDotGlow.material.opacity = 0.4;
+      if (this.globeRing) this.globeRing.material.opacity = 0.82;
 
-      if (distFromEarth > 1) {
-        // Beyond 1 ly: freeze globe, dim it slightly to indicate "out of range"
-        if (!this._globeFrozen) {
-          this._globeFrozen = true;
-          this.globeEarth.material.opacity = 0.4;
-          this.globeEarth.material.transparent = true;
-          if (this.globeDot) this.globeDot.material.opacity = 0.3;
-          if (this.globeRing) this.globeRing.material.opacity = 0.1;
-        }
+      if (this._globeInfo) {
+        this.globeEarth.rotation.y += (this._globeTargetRotY - this.globeEarth.rotation.y) * 0.08;
       } else {
-        // Near Earth: active globe
-        if (this._globeFrozen) {
-          this._globeFrozen = false;
-          this.globeEarth.material.opacity = 1;
-          this.globeEarth.material.transparent = false;
-          if (this.globeDot) this.globeDot.material.opacity = 0.95;
-          if (this.globeRing) this.globeRing.material.opacity = 0.3;
-        }
-        // Smooth lerp to target rotation (dot faces viewer)
-        this.globeEarth.rotation.y += (this._globeTargetRotY - this.globeEarth.rotation.y) * 0.05;
+        this.globeEarth.rotation.y += 0.001;
       }
 
-      // Gentle idle spin (always, even when frozen — keeps it feeling alive)
-      this.globeEarth.rotation.y += 0.001;
       // Tilt slightly for better view
       this.globeEarth.rotation.x = 0.15;
       this.globeRenderer.render(this.globeScene, this.globeCamera);

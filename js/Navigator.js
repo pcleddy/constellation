@@ -1,4 +1,4 @@
-// Navigator.js — Camera controls: fly (WASD), orbit (trackpad), roll, raycasting
+// Navigator.js — Camera controls: fly (WASD), orbit (trackpad), roll, star picking
 var CST = CST || {};
 
 CST.Navigator = class Navigator {
@@ -25,10 +25,8 @@ CST.Navigator = class Navigator {
     this.currentSpeed = 0;
     this._prevPos = this.position.clone();
 
-    // Raycasting for star interaction
-    this.raycaster = new THREE.Raycaster();
-    this.raycaster.params.Points = { threshold: 5 };
-    this.mouse = new THREE.Vector2();
+    // Pointer state for screen-space star interaction
+    this.pointerPx = new THREE.Vector2(-1, -1);
     this.hoveredStar = null;
     this.onStarHover = null;   // callback(star) or null
     this.onStarClick = null;   // callback(star) or null
@@ -58,9 +56,7 @@ CST.Navigator = class Navigator {
     });
     window.addEventListener('mouseup', () => { this.dragging = false; });
     window.addEventListener('mousemove', e => {
-      // Update mouse for raycasting
-      this.mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
-      this.mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+      this._updatePointer(e.clientX, e.clientY);
 
       if (!this.dragging) return;
       const dx = e.clientX - this.lastMouse.x;
@@ -84,6 +80,7 @@ CST.Navigator = class Navigator {
     // Click = select star
     this.dom.addEventListener('click', e => {
       if (e.target.closest('#controls, #help-overlay, #speed-hud, #star-info')) return;
+      this._updatePointer(e.clientX, e.clientY);
       this._checkStarClick();
     });
 
@@ -100,6 +97,7 @@ CST.Navigator = class Navigator {
     this.dom.addEventListener('touchstart', e => {
       if (e.touches.length === 1) {
         this.dragging = true;
+        this._updatePointer(e.touches[0].clientX, e.touches[0].clientY);
         this.lastMouse = { x: e.touches[0].clientX, y: e.touches[0].clientY };
       } else if (e.touches.length === 2) {
         this.dragging = false;
@@ -112,6 +110,7 @@ CST.Navigator = class Navigator {
     this.dom.addEventListener('touchmove', e => {
       e.preventDefault();
       if (e.touches.length === 1 && this.dragging) {
+        this._updatePointer(e.touches[0].clientX, e.touches[0].clientY);
         const dx = e.touches[0].clientX - this.lastMouse.x;
         const dy = e.touches[0].clientY - this.lastMouse.y;
         const flip = Math.cos(this.targetPitch) < 0 ? -1 : 1;
@@ -137,6 +136,16 @@ CST.Navigator = class Navigator {
     }, { passive: true });
   }
 
+  _updatePointer(clientX, clientY) {
+    const rect = this.dom.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+
+    const x = clientX - rect.left;
+    const y = clientY - rect.top;
+
+    this.pointerPx.set(x, y);
+  }
+
   _forwardVec() {
     const dir = new THREE.Vector3(0, 0, -1);
     dir.applyEuler(new THREE.Euler(this.pitch, this.yaw, this.roll, 'YXZ'));
@@ -155,38 +164,53 @@ CST.Navigator = class Navigator {
     return dir;
   }
 
-  // Pick the star whose true position is angularly closest to the cursor ray,
-  // among all sprites the ray physically intersects. This prevents large nearby
-  // sprites (like Sirius) from blocking clicks on smaller stars behind them.
-  _pickStarByAngle() {
-    this.raycaster.setFromCamera(this.mouse, this.camera);
-    const sprites = [];
-    this.scene.traverse(obj => {
-      if (obj.isSprite && obj.userData.star) sprites.push(obj);
-    });
-    const intersects = this.raycaster.intersectObjects(sprites);
-    if (intersects.length === 0) return null;
+  _getStarPickRadiusPx(sprite, viewportHeight) {
+    const spriteSize = sprite.scale.x || sprite.userData.star.getSize();
+    const distToCamera = this.camera.position.distanceTo(sprite.position);
+    if (distToCamera <= 0) return 18;
 
-    const rayDir = this.raycaster.ray.direction;
+    const fovRad = THREE.MathUtils.degToRad(this.camera.fov);
+    const projectedRadiusPx =
+      (spriteSize * viewportHeight) / (4 * distToCamera * Math.tan(fovRad / 2));
+
+    // Give tiny distant stars a reasonable click target, but keep nearby
+    // bright stars from growing into giant invisible blockers.
+    return THREE.MathUtils.clamp(projectedRadiusPx * 1.75, 10, 18);
+  }
+
+  _pickStarByScreenSpace() {
+    const rect = this.dom.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return null;
+    if (this.pointerPx.x < 0 || this.pointerPx.y < 0) return null;
+
     let bestStar = null;
-    let bestAngle = Infinity;
+    let bestDistPx = Infinity;
 
-    for (const hit of intersects) {
-      const star = hit.object.userData.star;
-      // Direction from camera to the star's true point position
-      const toStar = star.position.clone().sub(this.camera.position).normalize();
-      // Angular distance between the ray and the star's true position
-      const angle = Math.acos(Math.min(1, Math.max(-1, rayDir.dot(toStar))));
-      if (angle < bestAngle) {
-        bestAngle = angle;
-        bestStar = star;
+    this.scene.traverse(obj => {
+      if (!obj.isSprite || !obj.userData.star) return;
+
+      const projected = obj.position.clone().project(this.camera);
+      if (
+        projected.z < -1 || projected.z > 1 ||
+        Math.abs(projected.x) > 1 || Math.abs(projected.y) > 1
+      ) return;
+
+      const sx = (projected.x * 0.5 + 0.5) * rect.width;
+      const sy = (-projected.y * 0.5 + 0.5) * rect.height;
+      const distPx = Math.hypot(this.pointerPx.x - sx, this.pointerPx.y - sy);
+      const pickRadiusPx = this._getStarPickRadiusPx(obj, rect.height);
+
+      if (distPx <= pickRadiusPx && distPx < bestDistPx) {
+        bestDistPx = distPx;
+        bestStar = obj.userData.star;
       }
-    }
+    });
+
     return bestStar;
   }
 
   _checkStarHover() {
-    const star = this._pickStarByAngle();
+    const star = this._pickStarByScreenSpace();
     if (star !== this.hoveredStar) {
       this.hoveredStar = star;
       if (this.onStarHover) this.onStarHover(star);
@@ -194,23 +218,31 @@ CST.Navigator = class Navigator {
   }
 
   _checkStarClick() {
-    const star = this._pickStarByAngle();
+    const star = this._pickStarByScreenSpace();
     if (star && this.onStarClick) {
       this.onStarClick(star);
     }
+  }
+
+  _lookAlong(dir) {
+    const viewDir = dir.clone().normalize();
+    this.targetYaw = Math.atan2(-viewDir.x, -viewDir.z);
+    this.targetPitch = Math.asin(Math.max(-1, Math.min(1, viewDir.y)));
+    this.targetRoll = 0;
+  }
+
+  flyToEarthLocation(surfaceDir) {
+    const dir = surfaceDir.clone().normalize();
+    const surfaceR = 2.5; // just above Earth's sphere (radius 2)
+    this.targetPosition.copy(dir.clone().multiplyScalar(surfaceR));
+    this._lookAlong(dir);
   }
 
   flyToConstellation(constellation) {
     // Place camera on Earth's surface closest to the constellation,
     // so Earth is always behind the viewer (fixes southern constellations like Carina)
     const dir = constellation.getApparentDirection();
-    const surfaceR = 2.5; // just above Earth's sphere (radius 2)
-    this.targetPosition.copy(dir.clone().multiplyScalar(surfaceR));
-
-    // Point camera outward toward the constellation
-    this.targetYaw = Math.atan2(-dir.x, -dir.z);
-    this.targetPitch = Math.asin(Math.max(-1, Math.min(1, dir.y)));
-    this.targetRoll = 0;
+    this.flyToEarthLocation(dir);
   }
 
   resetToOrigin() {

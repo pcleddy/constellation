@@ -13,7 +13,6 @@ CST.Constellation = class Constellation {
     this.label = null;
     this._dimOpacity = 0.35;
     this._brightOpacity = 0.85;
-    this.overlayMesh = null;
     this._build(starTexture);
   }
 
@@ -62,10 +61,11 @@ CST.Constellation = class Constellation {
     const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false });
     const sprite = new THREE.Sprite(mat);
 
-    // Place label in front of the constellation (at nearest star distance × 0.7)
+    // Keep nearby constellation labels off the Earth's surface so they stay
+    // readable and don't fade the moment the camera starts moving.
     const dir = this.getApparentDirection();
     const nearDist = this.getNearestDistance();
-    const placeDist = nearDist * 0.7;
+    const placeDist = Math.max(16, nearDist * 0.75);
     const basePos = dir.clone().multiplyScalar(placeDist);
 
     // Offset above the highest star (projected to the same distance shell)
@@ -74,42 +74,58 @@ CST.Constellation = class Constellation {
       const projected = s.position.clone().normalize().multiplyScalar(placeDist);
       if (projected.y > maxY) maxY = projected.y;
     }
-    const labelOffset = Math.max(0.5, placeDist * 0.04);
+    const labelOffset = Math.max(0.8, placeDist * 0.03);
     basePos.y = maxY + labelOffset;
 
     sprite.position.copy(basePos);
 
-    // Scale based on placement distance so all labels subtend a similar
-    // angular size from Earth. The factor 0.008 gives readable but
-    // unobtrusive labels; cap prevents extreme sizes.
     const aspect = tw / 40;
-    const labelScale = Math.min(3.0, Math.max(0.3, placeDist * 0.008));
-    sprite.scale.set(aspect * labelScale, labelScale, 1);
+    sprite.scale.set(aspect * 1.2, 1.2, 1);
 
-    // Store for distance-based fading
+    // Store metadata for distance-aware sizing and fading.
     sprite.userData.isConstellationLabel = true;
+    sprite.userData.aspect = aspect;
     sprite.userData.baseDist = nearDist;
+    sprite.userData.placeDist = placeDist;
 
     return sprite;
   }
 
-  // Called each frame by App to fade labels based on camera distance
-  updateLabelOpacity(cameraPos) {
+  _updateLabelScale(camera, viewportHeight, isActive) {
+    const dist = camera.position.distanceTo(this.label.position);
+    const aspect = this.label.userData.aspect || 3;
+    const fovRad = THREE.MathUtils.degToRad(camera.fov);
+    const worldUnitsPerPx = (2 * dist * Math.tan(fovRad / 2)) / viewportHeight;
+    const targetHeightPx = isActive ? 34 : 26;
+    const labelHeight = THREE.MathUtils.clamp(targetHeightPx * worldUnitsPerPx, 1.2, 80);
+
+    this.label.scale.set(aspect * labelHeight, labelHeight, 1);
+  }
+
+  _updateLabelOpacity(cameraPos, isActive) {
     if (!this.label) return;
     const d = cameraPos.distanceTo(this.label.position);
     const baseDist = this.label.userData.baseDist || 100;
-    // Fade out when closer than 40% of base distance, fully transparent at 15%
-    const fadeStart = baseDist * 0.5;
-    const fadeEnd = baseDist * 0.15;
-    let opacity;
-    if (d > fadeStart) {
-      opacity = 0.85;
-    } else if (d < fadeEnd) {
+    const fullOpacity = isActive ? 0.92 : 0.58;
+    // Let the active label stay readable while approaching the stars, and only
+    // fade it when the camera is truly inside the constellation.
+    const fadeStart = Math.max(10, baseDist * 0.16);
+    const fadeEnd = Math.max(4, baseDist * 0.06);
+
+    let opacity = fullOpacity;
+    if (d <= fadeEnd) {
       opacity = 0;
-    } else {
-      opacity = 0.85 * (d - fadeEnd) / (fadeStart - fadeEnd);
+    } else if (d < fadeStart) {
+      opacity = fullOpacity * ((d - fadeEnd) / (fadeStart - fadeEnd));
     }
+
     this.label.material.opacity = opacity;
+  }
+
+  updateLabel(camera, viewportHeight, isActive) {
+    if (!this.label) return;
+    this._updateLabelScale(camera, viewportHeight, isActive);
+    this._updateLabelOpacity(camera.position, isActive);
   }
 
   // Centroid in 3D space (actual positions with depth)
@@ -138,57 +154,6 @@ CST.Constellation = class Constellation {
   // Nearest star distance (for initial view positioning)
   getNearestDistance() {
     return Math.min(...this.stars.map(s => s.dist_ly));
-  }
-
-  _buildOverlay() {
-    // Create a semi-transparent filled shape connecting outermost stars
-    // Uses convex hull of star directions projected onto a plane
-    if (this.stars.length < 3) return null;
-
-    const centroid = this.getCentroid();
-    const dir = this.getApparentDirection();
-    const medDist = this.getMedianDistance();
-
-    // Build a shape from star positions
-    const positions = [];
-    // Use all star positions to create a filled mesh
-    for (let i = 0; i < this.lineIndices.length; i++) {
-      const [a, b] = this.lineIndices[i];
-      const pa = this.stars[a].position;
-      const pb = this.stars[b].position;
-      const pc = centroid;
-      // Triangle fan: centroid → each line endpoint pair
-      positions.push(pc.x, pc.y, pc.z);
-      positions.push(pa.x, pa.y, pa.z);
-      positions.push(pb.x, pb.y, pb.z);
-    }
-
-    const geom = new THREE.BufferGeometry();
-    geom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-    geom.computeVertexNormals();
-
-    const mat = new THREE.MeshBasicMaterial({
-      color: 0x4488cc,
-      transparent: true,
-      opacity: 0.08,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending
-    });
-
-    const mesh = new THREE.Mesh(geom, mat);
-    mesh.visible = false;
-    return mesh;
-  }
-
-  toggleOverlay(show) {
-    if (!this.overlayMesh && show) {
-      this.overlayMesh = this._buildOverlay();
-      if (this.overlayMesh) this.group.add(this.overlayMesh);
-    }
-    if (this.overlayMesh) {
-      this.overlayMesh.visible = show;
-    }
   }
 
   highlight(on) {

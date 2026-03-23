@@ -91,10 +91,4 @@ CST.Sky = class Sky {
   getIds() {
     return Object.keys(this.constellations);
   }
-
-  toggleOverlays(show) {
-    for (const c of Object.values(this.constellations)) {
-      c.toggleOverlay(show);
-    }
-  }
 };
