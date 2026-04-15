@@ -14,11 +14,12 @@ CST.QuestApp = class QuestApp {
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.xr.enabled = true;
     document.body.appendChild(this.renderer.domElement);
-    document.body.appendChild(THREE.VRButton.createButton(this.renderer));
+    this._attachVrButton();
 
     this.scene.add(new THREE.HemisphereLight(0x89b4ff, 0x101820, 0.45));
 
     this.sky = new CST.Sky(this.scene);
+    this.sky.group.scale.setScalar(0.02);
     this.earth = new CST.Earth(this.scene);
     this.earth.group.position.set(0, -1.4, -0.8);
 
@@ -31,6 +32,7 @@ CST.QuestApp = class QuestApp {
     this.raycaster = new THREE.Raycaster();
     this.raycaster.params.Sprite = { threshold: 0.35 };
     this.tempMatrix = new THREE.Matrix4();
+    this._bufferSizeTarget = new THREE.Vector2();
     this.hoveredStar = null;
 
     this.overlayRefs = {
@@ -44,10 +46,35 @@ CST.QuestApp = class QuestApp {
     this._initDesktopLook();
     this._initHudPanel();
     this._initControllers();
+    this._tuneVisibilityForQuest();
     this._bindEvents();
     this._selectConstellationByIndex(0);
 
     this.renderer.setAnimationLoop(this._render.bind(this));
+
+    // Surface WebGL context loss rather than silently going white.
+    this.renderer.domElement.addEventListener('webglcontextlost', (e) => {
+      e.preventDefault();
+      var box = document.getElementById('error-box');
+      if (box) { box.style.display = 'block'; box.textContent = 'WebGL context lost — try reloading the page.'; }
+    });
+  }
+
+  _attachVrButton() {
+    var vrButtonApi =
+      (typeof VRButton !== 'undefined' && VRButton && typeof VRButton.createButton === 'function')
+        ? VRButton
+        : (THREE.VRButton && typeof THREE.VRButton.createButton === 'function' ? THREE.VRButton : null);
+
+    if (vrButtonApi) {
+      document.body.appendChild(vrButtonApi.createButton(this.renderer));
+      return;
+    }
+
+    var status = document.getElementById('status');
+    if (status) {
+      status.textContent = 'VR button helper did not load. Desktop preview still works, but immersive mode is unavailable until the helper script loads.';
+    }
   }
 
   _initDesktopLook() {
@@ -131,6 +158,34 @@ CST.QuestApp = class QuestApp {
     }
   }
 
+  _tuneVisibilityForQuest() {
+    this.scene.traverse(obj => {
+      if (obj.isSprite && obj.userData.star) {
+        obj.scale.multiplyScalar(1.8);
+        obj.material.opacity = 0.95;
+      }
+
+      if (obj.isLineSegments && obj.material) {
+        obj.material.opacity = Math.max(obj.material.opacity || 0, 0.65);
+        obj.material.transparent = true;
+      }
+
+      if (obj.isPoints && obj.material) {
+        obj.material.size = 6;
+        obj.material.opacity = 0.32;
+        obj.material.transparent = true;
+      }
+    });
+
+    for (const id of this.constellationIds) {
+      const constellation = this.sky.getConstellation(id);
+      if (constellation && constellation.label && constellation.label.material) {
+        constellation.label.scale.multiplyScalar(1.2);
+        constellation.label.material.opacity = Math.max(constellation.label.material.opacity || 0, 0.78);
+      }
+    }
+  }
+
   _getCurrentConstellation() {
     return this.sky.getConstellation(this.constellationIds[this.activeIndex]);
   }
@@ -138,10 +193,21 @@ CST.QuestApp = class QuestApp {
   _selectConstellationByIndex(index) {
     this.activeIndex = (index + this.constellationIds.length) % this.constellationIds.length;
     const id = this.constellationIds[this.activeIndex];
+    const constellation = this.sky.getConstellation(id);
+    this._orientSkyToConstellation(constellation);
     this.sky.highlightOnly(id);
     this.selectedStar = null;
     this._updateOverlay();
     this._drawHud();
+  }
+
+  _orientSkyToConstellation(constellation) {
+    if (!constellation) return;
+
+    const targetDir = constellation.getApparentDirection().clone().normalize();
+    const forward = new THREE.Vector3(0, 0, -1);
+    const rotation = new THREE.Quaternion().setFromUnitVectors(targetDir, forward);
+    this.sky.group.quaternion.copy(rotation);
   }
 
   _cycleConstellation() {
@@ -291,22 +357,41 @@ CST.QuestApp = class QuestApp {
   }
 
   _render() {
-    const dt = this.clock.getDelta();
-    this.earth.update(dt);
+    try {
+      const dt = this.clock.getDelta();
+      this.earth.update(dt);
 
-    if (!this.renderer.xr.isPresenting) {
-      this.camera.rotation.order = 'YXZ';
-      this.camera.rotation.set(this.desktopPitch, this.desktopYaw, 0);
+      if (!this.renderer.xr.isPresenting) {
+        this.camera.rotation.order = 'YXZ';
+        this.camera.rotation.set(this.desktopPitch, this.desktopYaw, 0);
+      }
+
+      this._updateHover();
+
+      // In XR the headset framebuffer height is much taller than window.innerHeight
+      // (which stays at the 2D browser window height). Fall back to window.innerHeight
+      // if getDrawingBufferSize returns 0 (can happen on first XR frame).
+      let renderHeight = window.innerHeight;
+      if (this.renderer.xr.isPresenting) {
+        const buf = this.renderer.getDrawingBufferSize(this._bufferSizeTarget);
+        renderHeight = buf.y > 0 ? buf.y : window.innerHeight;
+      }
+
+      const activeId = this.constellationIds[this.activeIndex];
+      for (const id of this.constellationIds) {
+        const constellation = this.sky.getConstellation(id);
+        constellation.updateLabel(this.camera, renderHeight, id === activeId);
+      }
+
+      this.renderer.render(this.scene, this.camera);
+    } catch (err) {
+      // Unhandled throw would silently kill setAnimationLoop — show it instead.
+      var box = document.getElementById('error-box');
+      if (box && box.style.display === 'none') {
+        box.style.display = 'block';
+        box.textContent = 'Render error: ' + (err && err.stack ? err.stack : String(err));
+      }
+      // Don't rethrow — keep the loop alive so subsequent frames can recover.
     }
-
-    this._updateHover();
-
-    const activeId = this.constellationIds[this.activeIndex];
-    for (const id of this.constellationIds) {
-      const constellation = this.sky.getConstellation(id);
-      constellation.updateLabel(this.camera, window.innerHeight, id === activeId);
-    }
-
-    this.renderer.render(this.scene, this.camera);
   }
 };

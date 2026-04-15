@@ -82,6 +82,22 @@ canvas { display: block; }
   font-size: 12px;
   z-index: 10;
 }
+#error-box {
+  display: none;
+  position: fixed;
+  left: 18px;
+  right: 18px;
+  bottom: 64px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: rgba(40, 8, 12, 0.92);
+  border: 1px solid rgba(255, 120, 120, 0.35);
+  color: rgba(255, 210, 210, 0.95);
+  font-size: 12px;
+  line-height: 1.45;
+  z-index: 15;
+  white-space: pre-wrap;
+}
 #enter-note {
   position: fixed;
   right: 18px;
@@ -96,6 +112,22 @@ canvas { display: block; }
   line-height: 1.5;
   z-index: 10;
 }
+#tests-link {
+  position: fixed;
+  top: 18px;
+  right: 18px;
+  padding: 7px 14px;
+  border-radius: 999px;
+  background: rgba(7, 13, 27, 0.78);
+  border: 1px solid rgba(115, 170, 255, 0.24);
+  color: var(--panel-accent);
+  font-size: 12px;
+  text-decoration: none;
+  z-index: 10;
+  opacity: 0.7;
+  transition: opacity 0.15s;
+}
+#tests-link:hover { opacity: 1; }
 @media (max-width: 640px) {
   #overlay, #status, #enter-note {
     left: 12px;
@@ -124,9 +156,11 @@ canvas { display: block; }
   </div>
 </div>
 <div id="status">Desktop fallback: drag to look around. In Quest, press VR to enter immersive mode.</div>
+<div id="error-box"></div>
 <div id="enter-note">Quest controls: trigger selects a star, grip cycles to the next constellation, and your headset orientation handles the 360 view.</div>
+<a id="tests-link" href="../tests/quest-tests.html" target="_blank">Run tests</a>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/webxr/VRButton.js"></script>
+<script src="js/VRButton.js"></script>
 <script src="../js/data.js"></script>
 <script src="../js/addendum.js"></script>
 <script src="../js/Star.js"></script>
@@ -135,8 +169,34 @@ canvas { display: block; }
 <script src="../js/Earth.js"></script>
 <script src="js/QuestApp.js"></script>
 <script>
+function showQuestError(message) {
+  var box = document.getElementById('error-box');
+  var status = document.getElementById('status');
+  if (box) {
+    box.style.display = 'block';
+    box.textContent = String(message || 'Unknown startup error');
+  }
+  if (status) {
+    status.textContent = 'Quest startup error. See details on screen.';
+  }
+}
+
+window.addEventListener('error', function (event) {
+  var details = event && event.error && event.error.stack
+    ? event.error.stack
+    : (event && event.message) || 'Unknown window error';
+  showQuestError(details);
+});
+
 window.addEventListener('DOMContentLoaded', function () {
-  window.questApp = new CST.QuestApp();
+  try {
+    if (!window.THREE) {
+      throw new Error('Three.js did not load.');
+    }
+    window.questApp = new CST.QuestApp();
+  } catch (err) {
+    showQuestError(err && err.stack ? err.stack : err);
+  }
 });
 </script>
 </body>

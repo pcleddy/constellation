@@ -33,6 +33,7 @@ CST.Navigator = class Navigator {
     this.hoveredStar = null;
     this.onStarHover = null;   // callback(star) or null
     this.onStarClick = null;   // callback(star) or null
+    this.onStarDoubleClick = null; // callback(star) or null
 
     // Drag state
     this.dragging = false;
@@ -85,6 +86,11 @@ CST.Navigator = class Navigator {
       if (e.target.closest('#controls, #help-overlay, #speed-hud, #star-info')) return;
       this._updatePointer(e.clientX, e.clientY);
       this._checkStarClick();
+    });
+    this.dom.addEventListener('dblclick', e => {
+      if (e.target.closest('#controls, #help-overlay, #speed-hud, #star-info')) return;
+      this._updatePointer(e.clientX, e.clientY);
+      this._checkStarDoubleClick();
     });
 
     // Scroll = move forward/back
@@ -248,6 +254,13 @@ CST.Navigator = class Navigator {
     }
   }
 
+  _checkStarDoubleClick() {
+    const star = this._pickStarByScreenSpace();
+    if (star && this.onStarDoubleClick) {
+      this.onStarDoubleClick(star);
+    }
+  }
+
   _lookAlong(dir) {
     const viewDir = dir.clone().normalize();
     this.targetYaw = Math.atan2(-viewDir.x, -viewDir.z);
@@ -284,8 +297,8 @@ CST.Navigator = class Navigator {
     const dist = toTarget.length();
     if (dist <= 1e-6) return;
 
-    const viewDir = toTarget.normalize();
     this.orbitRadius = dist;
+    const viewDir = toTarget.normalize();
     this.targetYaw = Math.atan2(-viewDir.x, -viewDir.z);
     this.targetPitch = Math.asin(Math.max(-1, Math.min(1, viewDir.y)));
     if (snapLook) {

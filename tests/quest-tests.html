@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Constellation Explorer — Quest / VR Tests</title>
+<style>
+body { font-family: monospace; background: #111; color: #ccc; padding: 20px; }
+h1 { color: #6ab4ff; margin-bottom: 4px; }
+h2 { color: #aaa; font-size: 13px; font-weight: normal; margin: 0 0 16px; }
+h3 { color: #8ab4ff; margin-top: 14px; }
+.pass { color: #6c6; }
+.fail { color: #f66; }
+.warn { color: #fc6; }
+.skip { color: #888; }
+.summary { margin-top: 20px; padding: 12px; border: 1px solid #444; border-radius: 6px; font-size: 16px; }
+/* Hide canvas the QuestApp renderer creates */
+canvas { display: none !important; }
+/* Hide the VR button it adds */
+#VRButton { display: none !important; }
+</style>
+</head>
+<body>
+<h1>Constellation Explorer — Quest / VR Tests</h1>
+<h2>Covers VRButton, XR feature detection, render error handling, and QuestApp helpers.</h2>
+<div id="results"></div>
+<div id="summary" class="summary"></div>
+
+<!-- Needed by QuestApp -->
+<div id="constellation-name"></div>
+<div id="constellation-meta"></div>
+<div id="star-name"></div>
+<div id="star-meta"></div>
+<div id="status"></div>
+<div id="error-box" style="display:none"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="../js/data.js"></script>
+<script src="../js/addendum.js"></script>
+<script src="../js/Star.js"></script>
+<script src="../js/Constellation.js"></script>
+<script src="../js/Sky.js"></script>
+<script src="../js/Earth.js"></script>
+<script src="../quest/js/VRButton.js"></script>
+<script src="../quest/js/QuestApp.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  const results = document.getElementById('results');
+  let passed = 0, failed = 0, warnings = 0, skipped = 0;
+
+  function log(status, msg) {
+    const div = document.createElement('div');
+    div.className = status;
+    const icon = { pass: '✓', fail: '✗', warn: '⚠', skip: '–' }[status] || '?';
+    div.textContent = `  ${icon} ${msg}`;
+    results.appendChild(div);
+    if (status === 'pass') passed++;
+    else if (status === 'fail') failed++;
+    else if (status === 'warn') warnings++;
+    else skipped++;
+  }
+
+  function section(title) {
+    const h = document.createElement('h3');
+    h.textContent = `━━━ ${title} ━━━`;
+    results.appendChild(h);
+  }
+
+  function assert(condition, passMsg, failMsg) {
+    log(condition ? 'pass' : 'fail', condition ? passMsg : failMsg);
+  }
+
+  // ─────────────────────────────────────────
+  // 1. VRButton (local file, no CDN)
+  // ─────────────────────────────────────────
+  section('VRButton — local file');
+
+  assert(typeof VRButton !== 'undefined', 'VRButton is defined', 'VRButton is not defined (script failed to load)');
+  assert(typeof VRButton.createButton === 'function', 'VRButton.createButton is a function', 'VRButton.createButton missing');
+
+  if (typeof VRButton !== 'undefined' && typeof VRButton.createButton === 'function') {
+    // createButton needs a renderer — use a minimal mock
+    const mockRenderer = {
+      xr: {
+        enabled: false,
+        setSession: function () {}
+      },
+      domElement: document.createElement('canvas')
+    };
+    let btn;
+    try {
+      btn = VRButton.createButton(mockRenderer);
+    } catch (e) {
+      log('fail', 'VRButton.createButton threw: ' + e.message);
+    }
+    if (btn) {
+      assert(btn instanceof HTMLElement, 'createButton returns an HTMLElement', 'createButton did not return an HTMLElement');
+      assert(btn.id === 'VRButton', 'Button id is "VRButton"', `Button id is "${btn.id}"`);
+      // Should eventually say ENTER VR or VR NOT SUPPORTED (async)
+      // Just check it has some textContent after a tick
+      setTimeout(function () {
+        const txt = btn.textContent;
+        const valid = txt === 'ENTER VR' || txt === 'VR NOT SUPPORTED' || txt === 'VR NOT ALLOWED' || txt === 'WEBXR NEEDS HTTPS';
+        log(valid ? 'pass' : 'warn', `VRButton text after async check: "${txt}"`);
+        finish();
+      }, 300);
+    }
+  }
+
+  // ─────────────────────────────────────────
+  // 2. WebXR API Detection
+  // ─────────────────────────────────────────
+  section('WebXR API Detection');
+
+  const hasXR = 'xr' in navigator;
+  log(hasXR ? 'pass' : 'skip', hasXR
+    ? 'navigator.xr is present'
+    : 'navigator.xr not present (normal on desktop without WebXR flag)');
+
+  const isSecure = window.isSecureContext;
+  assert(isSecure, 'Page is in a secure context (HTTPS or localhost)', 'NOT a secure context — WebXR will be blocked');
+
+  if (hasXR) {
+    navigator.xr.isSessionSupported('immersive-vr').then(function (supported) {
+      log(supported ? 'pass' : 'warn', supported
+        ? 'immersive-vr session is supported on this device'
+        : 'immersive-vr not supported here (expected on desktop — run on Quest for full check)');
+    }).catch(function (e) {
+      log('warn', 'isSessionSupported("immersive-vr") threw: ' + e.message);
+    });
+  }
+
+  // ─────────────────────────────────────────
+  // 3. QuestApp Class Definition
+  // ─────────────────────────────────────────
+  section('QuestApp Class Definition');
+
+  assert(typeof CST.QuestApp === 'function', 'CST.QuestApp class is defined', 'CST.QuestApp is not defined');
+
+  if (typeof CST.QuestApp === 'function') {
+    const proto = CST.QuestApp.prototype;
+    const requiredMethods = [
+      '_attachVrButton', '_initDesktopLook', '_initHudPanel', '_initControllers',
+      '_bindEvents', '_selectConstellationByIndex', '_cycleConstellation',
+      '_selectHoveredStar', '_pickStarFromController', '_updateHover',
+      '_getStarSummary', '_updateOverlay', '_drawHud', '_wrapText',
+      '_roundRect', '_render'
+    ];
+    let allFound = true;
+    for (const m of requiredMethods) {
+      if (typeof proto[m] !== 'function') {
+        log('fail', `QuestApp.prototype.${m} is missing`);
+        allFound = false;
+      }
+    }
+    if (allFound) log('pass', `All ${requiredMethods.length} expected methods present on QuestApp.prototype`);
+  }
+
+  // ─────────────────────────────────────────
+  // 4. QuestApp — instantiate and test helpers
+  // ─────────────────────────────────────────
+  section('QuestApp Instance — helpers');
+
+  let app = null;
+  try {
+    app = new CST.QuestApp();
+    log('pass', 'QuestApp constructed without throwing');
+  } catch (e) {
+    log('fail', 'QuestApp constructor threw: ' + (e && e.message ? e.message : String(e)));
+    if (e && e.stack) {
+      const div = document.createElement('div');
+      div.style.color = '#f66';
+      div.style.whiteSpace = 'pre';
+      div.style.fontSize = '11px';
+      div.textContent = e.stack;
+      results.appendChild(div);
+    }
+  }
+
+  if (app) {
+    // _getStarSummary with no star
+    const noStar = app._getStarSummary(null);
+    assert(typeof noStar === 'object', '_getStarSummary(null) returns object', '_getStarSummary(null) did not return object');
+    assert(typeof noStar.name === 'string' && noStar.name.length > 0, '_getStarSummary(null).name is a non-empty string', '_getStarSummary(null).name invalid');
+    assert(typeof noStar.meta === 'string', '_getStarSummary(null).meta is a string', '_getStarSummary(null).meta invalid');
+
+    // _getStarSummary with a real star
+    const starData = CST.constellations[0].stars[0]; // Betelgeuse
+    const fakeStar = new CST.Star(starData);
+    const withStar = app._getStarSummary(fakeStar);
+    assert(withStar.name === starData.name, `_getStarSummary returns correct name "${withStar.name}"`, `_getStarSummary name mismatch: "${withStar.name}"`);
+    assert(withStar.meta.includes('ly'), '_getStarSummary meta includes distance "ly"', '_getStarSummary meta missing distance');
+    assert(withStar.meta.includes('mag'), '_getStarSummary meta includes magnitude', '_getStarSummary meta missing magnitude');
+
+    // _getCurrentConstellation
+    const c = app._getCurrentConstellation();
+    assert(c !== null && typeof c === 'object', '_getCurrentConstellation() returns an object', '_getCurrentConstellation() returned null');
+    assert(typeof c.name === 'string' && c.name.length > 0, `_getCurrentConstellation().name = "${c.name}"`, '_getCurrentConstellation().name invalid');
+
+    // cycling
+    const firstIndex = app.activeIndex;
+    app._cycleConstellation();
+    const secondIndex = app.activeIndex;
+    assert(secondIndex !== firstIndex, '_cycleConstellation() advances activeIndex', '_cycleConstellation() did not change activeIndex');
+    app._selectConstellationByIndex(firstIndex); // reset
+
+    // constellationIds is sorted alphabetically
+    const ids = app.constellationIds;
+    const names = ids.map(id => app.sky.getConstellation(id).name);
+    let sorted = true;
+    for (let i = 1; i < names.length; i++) {
+      if (names[i].localeCompare(names[i - 1]) < 0) { sorted = false; break; }
+    }
+    assert(sorted, `constellationIds are sorted alphabetically (${ids.length} constellations)`, 'constellationIds are NOT sorted alphabetically');
+
+    // _bufferSizeTarget reuse (no new Vector2 per frame)
+    assert(app._bufferSizeTarget instanceof THREE.Vector2, '_bufferSizeTarget is a reusable THREE.Vector2', '_bufferSizeTarget not set (allocates new Vector2 every frame)');
+  }
+
+  // ─────────────────────────────────────────
+  // 5. Render Error Handling
+  // ─────────────────────────────────────────
+  section('Render Error Handling');
+
+  if (app) {
+    // Patch earth.update to throw on the next call, then verify error-box shows
+    const errorBox = document.getElementById('error-box');
+    errorBox.style.display = 'none';
+    errorBox.textContent = '';
+
+    const realUpdate = app.earth.update.bind(app.earth);
+    app.earth.update = function () { throw new Error('__test_render_error__'); };
+
+    try {
+      app._render(); // should NOT throw — try-catch inside _render eats it
+      log('pass', '_render() does not propagate exceptions (loop stays alive)');
+    } catch (e) {
+      log('fail', '_render() threw and would kill the animation loop: ' + e.message);
+    }
+
+    assert(errorBox.style.display !== 'none', 'error-box becomes visible on render exception', 'error-box remained hidden after render exception');
+    assert(errorBox.textContent.includes('__test_render_error__'), 'error-box shows the error message', `error-box content: "${errorBox.textContent.substring(0, 60)}"`);
+
+    // Restore
+    app.earth.update = realUpdate;
+    errorBox.style.display = 'none';
+    errorBox.textContent = '';
+  } else {
+    log('skip', 'Skipped (QuestApp failed to construct)');
+    log('skip', 'Skipped (QuestApp failed to construct)');
+  }
+
+  // ─────────────────────────────────────────
+  // 6. Context Loss Handler
+  // ─────────────────────────────────────────
+  section('WebGL Context Loss Handler');
+
+  if (app) {
+    const errorBox = document.getElementById('error-box');
+    errorBox.style.display = 'none';
+    errorBox.textContent = '';
+
+    // Simulate a webglcontextlost event on the renderer canvas
+    const canvas = app.renderer.domElement;
+    const evt = new Event('webglcontextlost', { bubbles: false, cancelable: true });
+    canvas.dispatchEvent(evt);
+
+    assert(errorBox.style.display !== 'none', 'error-box shows on webglcontextlost', 'error-box did not show on webglcontextlost');
+
+    errorBox.style.display = 'none';
+    errorBox.textContent = '';
+  } else {
+    log('skip', 'Skipped (QuestApp failed to construct)');
+  }
+
+  // ─────────────────────────────────────────
+  // 7. HUD Panel
+  // ─────────────────────────────────────────
+  section('HUD Panel');
+
+  if (app) {
+    assert(app.hudPanel !== undefined, 'hudPanel created', 'hudPanel is undefined');
+    assert(app.hudPanel instanceof THREE.Mesh, 'hudPanel is a THREE.Mesh', 'hudPanel is not a Mesh');
+    assert(app.hudTexture instanceof THREE.CanvasTexture, 'hudTexture is a CanvasTexture', 'hudTexture is not a CanvasTexture');
+    assert(app.hudCanvas instanceof HTMLCanvasElement, 'hudCanvas is an HTMLCanvasElement', 'hudCanvas is not a canvas');
+    assert(app.hudCanvas.width === 1024, `hudCanvas width = ${app.hudCanvas.width}`, `hudCanvas width = ${app.hudCanvas.width} (expected 1024)`);
+    assert(app.hudCanvas.height === 512, `hudCanvas height = ${app.hudCanvas.height}`, `hudCanvas height = ${app.hudCanvas.height} (expected 512)`);
+    // Verify hudPanel is attached to camera (so it follows the user's head in VR)
+    let panelOnCamera = false;
+    app.camera.children.forEach(function (child) { if (child === app.hudPanel) panelOnCamera = true; });
+    assert(panelOnCamera, 'hudPanel is a child of camera (follows head in VR)', 'hudPanel is NOT attached to camera');
+  } else {
+    log('skip', 'Skipped (QuestApp failed to construct)');
+  }
+
+  // ─────────────────────────────────────────
+  // 8. Controllers
+  // ─────────────────────────────────────────
+  section('XR Controllers');
+
+  if (app) {
+    assert(Array.isArray(app.controllers), 'app.controllers is an array', 'app.controllers is not an array');
+    assert(app.controllers.length === 2, `${app.controllers.length} controllers registered`, `Expected 2 controllers, got ${app.controllers.length}`);
+    for (let i = 0; i < app.controllers.length; i++) {
+      const c = app.controllers[i];
+      assert(c instanceof THREE.Group || typeof c === 'object', `Controller ${i} is an Object3D`, `Controller ${i} is not an Object3D`);
+      const ray = c.children.find(ch => ch.name === 'ray');
+      assert(ray !== undefined, `Controller ${i} has a "ray" Line child`, `Controller ${i} is missing its ray line`);
+    }
+  } else {
+    log('skip', 'Skipped (QuestApp failed to construct)');
+  }
+
+  // ─────────────────────────────────────────
+  // Summary (delayed to allow async VRButton check)
+  // ─────────────────────────────────────────
+  function finish() {
+    const summary = document.getElementById('summary');
+    summary.className = `summary ${failed > 0 ? 'fail' : 'pass'}`;
+    summary.textContent = `Results: ${passed} passed, ${failed} failed, ${warnings} warnings, ${skipped} skipped`;
+  }
+
+  // Initial summary (VRButton async result may update it)
+  setTimeout(finish, 50);
+
+})();
+</script>
+</body>
+</html>

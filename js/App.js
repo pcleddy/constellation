@@ -30,6 +30,7 @@ CST.App = class App {
     // Wire up star interaction
     this.nav.onStarHover = star => this._onStarHover(star);
     this.nav.onStarClick = star => this._onStarClick(star);
+    this.nav.onStarDoubleClick = star => this._onStarDoubleClick(star);
 
     // Earth mini-globe (second renderer)
     this._initGlobe();
@@ -84,6 +85,13 @@ CST.App = class App {
 
   _bindKeys() {
     window.addEventListener('keydown', e => {
+      const isQuestionKey = e.key === '?' || (e.code === 'Slash' && e.shiftKey);
+      if (isQuestionKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        document.getElementById('help-overlay').classList.toggle('active');
+        e.preventDefault();
+        return;
+      }
+
       if (e.code === 'Escape') {
         document.getElementById('help-overlay').classList.remove('active');
         document.getElementById('star-info').classList.remove('active');
@@ -122,6 +130,18 @@ CST.App = class App {
   }
 
   _focusOnStar(star) {
+    if (!star || !star.mesh) return;
+
+    this.nav.disableOrbit();
+    const starWorld = new THREE.Vector3();
+    star.mesh.getWorldPosition(starWorld);
+    this.nav.enableOrbit(starWorld, true);
+
+    this.focusName = 'Earth';
+    this._updateDistanceReferenceLabel();
+  }
+
+  _centerOnStar(star) {
     if (!star || !star.mesh) return;
 
     this.nav.disableOrbit();
@@ -229,7 +249,8 @@ CST.App = class App {
     }
 
     info.facts = [
-      'Scene centered on this star for local exploration.',
+      'Orbit target set to this star without shifting your position.',
+      'Double-click to recenter the scene on this star.',
       'Drag, two-finger swipe, or use arrow keys to orbit around it.',
       ...(info.facts || [])
     ];
@@ -243,6 +264,19 @@ CST.App = class App {
     this._focusOnStar(star);
     this._updateGlobe(null);
     this._showInfoPanel(info);
+  }
+
+  _onStarDoubleClick(star) {
+    if (!star) return;
+
+    if (star.constellationId) {
+      this.activeConstellation = star.constellationId;
+      this.sky.highlightOnly(star.constellationId);
+      this._updateConstellationButtons(star.constellationId);
+    }
+
+    this._centerOnStar(star);
+    this._updateGlobe(null);
   }
 
   _showConstellationInfo(constellation) {
